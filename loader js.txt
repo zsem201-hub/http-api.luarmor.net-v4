@@ -1,0 +1,806 @@
+--[[
+    Ultimate Hub V9.3 - Loader
+    OBFUSCATE FILE INI SEBELUM UPLOAD!
+    Tested: Luarmor, Luraph, PSU, IronBrew2
+]]
+
+local UH_CONFIG = {
+    SERVER_URL = "https://lua-protector-production.up.railway.app",
+    KEY_LINK = "https://work.ink/29pu/key-sistem-3",
+    CORE_ENDPOINT = "/core",
+    VALIDATE_ENDPOINT = "/api/validate",
+    CHECK_ENDPOINT = "/api/check",
+    BIND_ENDPOINT = "/api/bind",
+    SAVE_KEY = true,
+    KEY_FILE = "UHKey_v93.txt",
+    USER_FILE = "UHUser_v93.txt",
+    MAX_ATTEMPTS = 5,
+    COOLDOWN_TIME = 60,
+    VERSION = "9.3",
+    ONE_KEY_ONE_USER = true
+}
+
+if getgenv().UHLoaded then
+    local success1 = pcall(function() 
+        if getgenv().UH then 
+            getgenv().UH:Destroy() 
+        end 
+    end)
+    local success2 = pcall(function() 
+        local gui = game:GetService("CoreGui"):FindFirstChild("UHKeySystem") 
+        if gui then 
+            gui:Destroy() 
+        end 
+    end)
+    local success3 = pcall(function() 
+        local rayfield = game:GetService("CoreGui"):FindFirstChild("Rayfield") 
+        if rayfield then 
+            rayfield:Destroy() 
+        end 
+    end)
+    getgenv().UH = nil
+    getgenv().UHCore = nil
+    getgenv().UHLoaded = nil
+    task.wait(0.3)
+end
+
+getgenv().UHLoaded = true
+
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui")
+local LocalPlayer = Players.LocalPlayer
+
+local currentAttempts = 0
+local lastAttemptTime = 0
+local keyValidationCache = {}
+
+local function SafeWriteFile(fileName, content)
+    if writefile then
+        local success = pcall(function()
+            writefile(fileName, content)
+        end)
+        return success
+    end
+    return false
+end
+
+local function SafeReadFile(fileName)
+    if isfile and readfile then
+        local success, result = pcall(function()
+            if isfile(fileName) then
+                return readfile(fileName)
+            end
+            return nil
+        end)
+        if success then
+            return result
+        end
+    end
+    return nil
+end
+
+local function SafeDeleteFile(fileName)
+    if isfile and delfile then
+        pcall(function()
+            if isfile(fileName) then
+                delfile(fileName)
+            end
+        end)
+    end
+end
+
+local function SafeSetClipboard(text)
+    if setclipboard then
+        pcall(function()
+            setclipboard(text)
+        end)
+    end
+end
+
+local function GetHardwareId()
+    local hwid = nil
+    local hwidMethods = {
+        function() 
+            if gethwid then 
+                return gethwid() 
+            end 
+            return nil 
+        end,
+        function() 
+            if getexecutorhwid then 
+                return getexecutorhwid() 
+            end 
+            return nil 
+        end,
+        function() 
+            if syn and syn.cache_hwid then 
+                return syn.cache_hwid() 
+            end 
+            return nil 
+        end,
+        function() 
+            if fluxus and fluxus.get_hwid then 
+                return fluxus.get_hwid() 
+            end 
+            return nil 
+        end,
+        function() 
+            if get_hwid then 
+                return get_hwid() 
+            end 
+            return nil 
+        end,
+        function() 
+            if HWID then 
+                return HWID() 
+            end 
+            return nil 
+        end,
+        function() 
+            if getexecutorname then 
+                return getexecutorname() .. "_" .. tostring(LocalPlayer.UserId) 
+            end 
+            return nil 
+        end
+    }
+    
+    for i = 1, #hwidMethods do
+        local success, result = pcall(hwidMethods[i])
+        if success and result and result ~= "" then
+            hwid = tostring(result)
+            break
+        end
+    end
+    
+    if hwid then
+        return hwid .. "_" .. tostring(LocalPlayer.UserId)
+    else
+        return "NOID_" .. tostring(LocalPlayer.UserId) .. "_" .. LocalPlayer.Name
+    end
+end
+
+local function MakeHttpRequest(url, method, headers, body)
+    headers = headers or {}
+    headers["UH-Executor"] = "true"
+    headers["UH-Version"] = UH_CONFIG.VERSION
+    
+    local requestFunction = nil
+    
+    if syn and syn.request then
+        requestFunction = syn.request
+    elseif request then
+        requestFunction = request
+    elseif http_request then
+        requestFunction = http_request
+    elseif fluxus and fluxus.request then
+        requestFunction = fluxus.request
+    elseif delta and delta.request then
+        requestFunction = delta.request
+    elseif http and http.request then
+        requestFunction = http.request
+    end
+    
+    if requestFunction then
+        local success, response = pcall(function()
+            return requestFunction({
+                Url = url,
+                Method = method or "GET",
+                Headers = headers,
+                Body = body
+            })
+        end)
+        if success and response then
+            return response
+        end
+    end
+    
+    if method == "GET" or method == nil then
+        local success, result = pcall(function()
+            return game:HttpGet(url)
+        end)
+        if success then
+            return {
+                Body = result,
+                StatusCode = 200
+            }
+        end
+    end
+    
+    return nil
+end
+
+local function ShowNotification(title, text, duration)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title or "Ultimate Hub",
+            Text = text or "",
+            Duration = duration or 5
+        })
+    end)
+end
+
+local function OpenBrowserUrl(url)
+    if not url or url == "" then
+        return false
+    end
+    
+    local urlFunctions = {
+        "openurl",
+        "OpenURL", 
+        "open_url",
+        "browseurl",
+        "BrowseURL",
+        "browse_url"
+    }
+    
+    for i = 1, #urlFunctions do
+        local funcName = urlFunctions[i]
+        local func = getgenv()[funcName] or getfenv()[funcName] or _G[funcName]
+        if func and type(func) == "function" then
+            local success = pcall(function()
+                func(url)
+            end)
+            if success then
+                return true
+            end
+        end
+    end
+    
+    pcall(function()
+        if syn and syn.open_browser then
+            syn.open_browser(url)
+        end
+    end)
+    
+    pcall(function()
+        if fluxus and fluxus.open_browser then
+            fluxus.open_browser(url)
+        end
+    end)
+    
+    return false
+end
+
+local function ValidateKeyWithServer(key)
+    if not key or key == "" then
+        return false, "Please enter a key!"
+    end
+    
+    key = string.gsub(key, "^%s*(.-)%s*$", "%1")
+    
+    if string.len(key) < 5 then
+        return false, "Key too short!"
+    end
+    
+    local cacheEntry = keyValidationCache[key]
+    if cacheEntry and (os.time() - cacheEntry.timestamp) < 300 then
+        return cacheEntry.isValid, cacheEntry.message
+    end
+    
+    local userIdentifier = GetHardwareId()
+    
+    local requestSuccess, requestResult = pcall(function()
+        local response = MakeHttpRequest(
+            UH_CONFIG.SERVER_URL .. UH_CONFIG.VALIDATE_ENDPOINT,
+            "POST",
+            {
+                ["Content-Type"] = "application/json"
+            },
+            HttpService:JSONEncode({
+                key = key,
+                hwid = userIdentifier,
+                userId = LocalPlayer.UserId,
+                userName = LocalPlayer.Name
+            })
+        )
+        
+        if response and response.Body then
+            return HttpService:JSONDecode(response.Body)
+        end
+        return nil
+    end)
+    
+    if requestSuccess and requestResult then
+        if requestResult.valid == true or requestResult.success == true then
+            if requestResult.bound_to_other then
+                local boundUserName = requestResult.bound_user or "Unknown"
+                keyValidationCache[key] = {
+                    isValid = false,
+                    message = "Key bound to: " .. boundUserName,
+                    timestamp = os.time()
+                }
+                return false, "Key bound to: " .. boundUserName
+            end
+            
+            local successMessage = requestResult.message or "Key Valid!"
+            if requestResult.new_binding then
+                successMessage = "Key Registered!"
+            elseif requestResult.returning_user then
+                successMessage = "Welcome back!"
+            end
+            
+            keyValidationCache[key] = {
+                isValid = true,
+                message = successMessage,
+                timestamp = os.time()
+            }
+            return true, successMessage
+        else
+            local errorMessage = requestResult.message or "Invalid key!"
+            keyValidationCache[key] = {
+                isValid = false,
+                message = errorMessage,
+                timestamp = os.time()
+            }
+            return false, errorMessage
+        end
+    end
+    
+    local fallbackSuccess, fallbackResult = pcall(function()
+        local workInkUrl = "https://work.ink/_api/v2/token/isValid/" .. key
+        return HttpService:JSONDecode(game:HttpGet(workInkUrl))
+    end)
+    
+    if fallbackSuccess and fallbackResult and fallbackResult.valid == true then
+        keyValidationCache[key] = {
+            isValid = true,
+            message = "Key Valid!",
+            timestamp = os.time()
+        }
+        return true, "Key Valid!"
+    end
+    
+    keyValidationCache[key] = {
+        isValid = false,
+        message = "Invalid key!",
+        timestamp = os.time()
+    }
+    return false, "Invalid key!"
+end
+
+local function CreateKeySystemGui()
+    pcall(function()
+        if getgenv().UH then
+            getgenv().UH:Destroy()
+        end
+    end)
+    
+    pcall(function()
+        local existingGui = CoreGui:FindFirstChild("UHKeySystem")
+        if existingGui then
+            existingGui:Destroy()
+        end
+    end)
+    
+    getgenv().UH = nil
+    task.wait(0.1)
+    
+    if UH_CONFIG.SAVE_KEY then
+        local savedKey = SafeReadFile(UH_CONFIG.KEY_FILE)
+        local savedUser = SafeReadFile(UH_CONFIG.USER_FILE)
+        local currentUser = GetHardwareId()
+        
+        if savedKey and savedKey ~= "" then
+            if UH_CONFIG.ONE_KEY_ONE_USER and savedUser and savedUser ~= currentUser then
+                SafeDeleteFile(UH_CONFIG.KEY_FILE)
+                SafeDeleteFile(UH_CONFIG.USER_FILE)
+                ShowNotification("Ultimate Hub", "Key reset: Different device", 3)
+            else
+                ShowNotification("Ultimate Hub", "Checking saved key...", 2)
+                local isValid = ValidateKeyWithServer(savedKey)
+                if isValid then
+                    SafeWriteFile(UH_CONFIG.USER_FILE, currentUser)
+                    ShowNotification("Ultimate Hub", "Key valid! Loading...", 2)
+                    return true
+                end
+                SafeDeleteFile(UH_CONFIG.KEY_FILE)
+                SafeDeleteFile(UH_CONFIG.USER_FILE)
+            end
+        end
+    end
+    
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "UHKeySystem"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    local parentSuccess = pcall(function()
+        ScreenGui.Parent = CoreGui
+    end)
+    
+    if not parentSuccess then
+        pcall(function()
+            ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+        end)
+    end
+    
+    local BackgroundFrame = Instance.new("Frame")
+    BackgroundFrame.Name = "Background"
+    BackgroundFrame.Size = UDim2.new(1, 0, 1, 0)
+    BackgroundFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    BackgroundFrame.BackgroundTransparency = 0.5
+    BackgroundFrame.BorderSizePixel = 0
+    BackgroundFrame.Parent = ScreenGui
+    
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 360, 0, 220)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    MainFrame.Parent = ScreenGui
+    
+    local MainCorner = Instance.new("UICorner")
+    MainCorner.CornerRadius = UDim.new(0, 12)
+    MainCorner.Parent = MainFrame
+    
+    local MainStroke = Instance.new("UIStroke")
+    MainStroke.Color = Color3.fromRGB(100, 100, 255)
+    MainStroke.Thickness = 2
+    MainStroke.Parent = MainFrame
+    
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Name = "TitleBar"
+    TitleBar.Size = UDim2.new(1, 0, 0, 45)
+    TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    TitleBar.BorderSizePixel = 0
+    TitleBar.Parent = MainFrame
+    
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 12)
+    TitleCorner.Parent = TitleBar
+    
+    local TitleFix = Instance.new("Frame")
+    TitleFix.Name = "TitleFix"
+    TitleFix.Size = UDim2.new(1, 0, 0, 15)
+    TitleFix.Position = UDim2.new(0, 0, 1, -15)
+    TitleFix.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    TitleFix.BorderSizePixel = 0
+    TitleFix.Parent = TitleBar
+    
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.Name = "Title"
+    TitleLabel.Size = UDim2.new(1, -20, 0, 25)
+    TitleLabel.Position = UDim2.new(0, 10, 0, 5)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = "Ultimate Hub V" .. UH_CONFIG.VERSION
+    TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    TitleLabel.TextSize = 18
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Center
+    TitleLabel.Parent = TitleBar
+    
+    local StatusLabel = Instance.new("TextLabel")
+    StatusLabel.Name = "Status"
+    StatusLabel.Size = UDim2.new(1, -20, 0, 15)
+    StatusLabel.Position = UDim2.new(0, 10, 0, 28)
+    StatusLabel.BackgroundTransparency = 1
+    StatusLabel.Text = "Secure Server Active"
+    StatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    StatusLabel.TextSize = 10
+    StatusLabel.Font = Enum.Font.Gotham
+    StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
+    StatusLabel.Parent = TitleBar
+    
+    local UserInfoLabel = Instance.new("TextLabel")
+    UserInfoLabel.Name = "UserInfo"
+    UserInfoLabel.Size = UDim2.new(1, 0, 0, 15)
+    UserInfoLabel.Position = UDim2.new(0, 0, 0, 50)
+    UserInfoLabel.BackgroundTransparency = 1
+    UserInfoLabel.Text = LocalPlayer.Name .. " (" .. tostring(LocalPlayer.UserId) .. ")"
+    UserInfoLabel.TextColor3 = Color3.fromRGB(120, 120, 140)
+    UserInfoLabel.TextSize = 10
+    UserInfoLabel.Font = Enum.Font.Gotham
+    UserInfoLabel.Parent = MainFrame
+    
+    local InputContainer = Instance.new("Frame")
+    InputContainer.Name = "InputContainer"
+    InputContainer.Size = UDim2.new(0, 320, 0, 40)
+    InputContainer.Position = UDim2.new(0.5, -160, 0, 70)
+    InputContainer.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    InputContainer.BorderSizePixel = 0
+    InputContainer.Parent = MainFrame
+    
+    local InputCorner = Instance.new("UICorner")
+    InputCorner.CornerRadius = UDim.new(0, 8)
+    InputCorner.Parent = InputContainer
+    
+    local InputStroke = Instance.new("UIStroke")
+    InputStroke.Color = Color3.fromRGB(60, 60, 80)
+    InputStroke.Thickness = 1
+    InputStroke.Parent = InputContainer
+    
+    local KeyInput = Instance.new("TextBox")
+    KeyInput.Name = "KeyInput"
+    KeyInput.Size = UDim2.new(1, -16, 1, 0)
+    KeyInput.Position = UDim2.new(0, 8, 0, 0)
+    KeyInput.BackgroundTransparency = 1
+    KeyInput.Text = ""
+    KeyInput.PlaceholderText = "Enter your key here..."
+    KeyInput.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
+    KeyInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+    KeyInput.TextSize = 13
+    KeyInput.Font = Enum.Font.Gotham
+    KeyInput.ClearTextOnFocus = false
+    KeyInput.Parent = InputContainer
+    
+    local StatusTextLabel = Instance.new("TextLabel")
+    StatusTextLabel.Name = "StatusText"
+    StatusTextLabel.Size = UDim2.new(1, -40, 0, 25)
+    StatusTextLabel.Position = UDim2.new(0, 20, 0, 115)
+    StatusTextLabel.BackgroundTransparency = 1
+    StatusTextLabel.Text = ""
+    StatusTextLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+    StatusTextLabel.TextSize = 11
+    StatusTextLabel.Font = Enum.Font.Gotham
+    StatusTextLabel.TextXAlignment = Enum.TextXAlignment.Center
+    StatusTextLabel.TextWrapped = true
+    StatusTextLabel.Parent = MainFrame
+    
+    local ValidateButton = Instance.new("TextButton")
+    ValidateButton.Name = "ValidateButton"
+    ValidateButton.Size = UDim2.new(0, 155, 0, 36)
+    ValidateButton.Position = UDim2.new(0.5, -160, 0, 145)
+    ValidateButton.BackgroundColor3 = Color3.fromRGB(80, 120, 255)
+    ValidateButton.BorderSizePixel = 0
+    ValidateButton.Text = "Validate Key"
+    ValidateButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ValidateButton.TextSize = 13
+    ValidateButton.Font = Enum.Font.GothamBold
+    ValidateButton.Parent = MainFrame
+    
+    local ValidateCorner = Instance.new("UICorner")
+    ValidateCorner.CornerRadius = UDim.new(0, 8)
+    ValidateCorner.Parent = ValidateButton
+    
+    local GetKeyButton = Instance.new("TextButton")
+    GetKeyButton.Name = "GetKeyButton"
+    GetKeyButton.Size = UDim2.new(0, 155, 0, 36)
+    GetKeyButton.Position = UDim2.new(0.5, 5, 0, 145)
+    GetKeyButton.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+    GetKeyButton.BorderSizePixel = 0
+    GetKeyButton.Text = "Get Key"
+    GetKeyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    GetKeyButton.TextSize = 13
+    GetKeyButton.Font = Enum.Font.GothamBold
+    GetKeyButton.Parent = MainFrame
+    
+    local GetKeyCorner = Instance.new("UICorner")
+    GetKeyCorner.CornerRadius = UDim.new(0, 8)
+    GetKeyCorner.Parent = GetKeyButton
+    
+    local BottomContainer = Instance.new("Frame")
+    BottomContainer.Name = "BottomContainer"
+    BottomContainer.Size = UDim2.new(1, -20, 0, 20)
+    BottomContainer.Position = UDim2.new(0, 10, 1, -25)
+    BottomContainer.BackgroundTransparency = 1
+    BottomContainer.Parent = MainFrame
+    
+    local AttemptsLabel = Instance.new("TextLabel")
+    AttemptsLabel.Name = "Attempts"
+    AttemptsLabel.Size = UDim2.new(0.5, 0, 1, 0)
+    AttemptsLabel.BackgroundTransparency = 1
+    AttemptsLabel.Text = "Attempts: 0/" .. tostring(UH_CONFIG.MAX_ATTEMPTS)
+    AttemptsLabel.TextColor3 = Color3.fromRGB(100, 100, 100)
+    AttemptsLabel.TextSize = 10
+    AttemptsLabel.Font = Enum.Font.Gotham
+    AttemptsLabel.TextXAlignment = Enum.TextXAlignment.Left
+    AttemptsLabel.Parent = BottomContainer
+    
+    local CreditLabel = Instance.new("TextLabel")
+    CreditLabel.Name = "Credit"
+    CreditLabel.Size = UDim2.new(0.5, 0, 1, 0)
+    CreditLabel.Position = UDim2.new(0.5, 0, 0, 0)
+    CreditLabel.BackgroundTransparency = 1
+    CreditLabel.Text = "by ToingDC"
+    CreditLabel.TextColor3 = Color3.fromRGB(70, 70, 80)
+    CreditLabel.TextSize = 10
+    CreditLabel.Font = Enum.Font.Gotham
+    CreditLabel.TextXAlignment = Enum.TextXAlignment.Right
+    CreditLabel.Parent = BottomContainer
+    
+    MainFrame.Size = UDim2.new(0, 0, 0, 0)
+    local openTween = TweenService:Create(
+        MainFrame,
+        TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        {Size = UDim2.new(0, 360, 0, 220)}
+    )
+    openTween:Play()
+    
+    local keyValidated = false
+    local validationEvent = Instance.new("BindableEvent")
+    local isProcessing = false
+    
+    local function CloseKeySystemGui()
+        local closeTween = TweenService:Create(
+            MainFrame,
+            TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+            {Size = UDim2.new(0, 0, 0, 0)}
+        )
+        closeTween:Play()
+        
+        local fadeTween = TweenService:Create(
+            BackgroundFrame,
+            TweenInfo.new(0.25),
+            {BackgroundTransparency = 1}
+        )
+        fadeTween:Play()
+        
+        task.wait(0.25)
+        ScreenGui:Destroy()
+    end
+    
+    local function ProcessKeyValidation()
+        if isProcessing then
+            return
+        end
+        
+        isProcessing = true
+        
+        local inputKey = string.gsub(KeyInput.Text, "^%s*(.-)%s*$", "%1")
+        
+        if inputKey == "" then
+            StatusTextLabel.Text = "Please enter a key!"
+            StatusTextLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+            isProcessing = false
+            return
+        end
+        
+        if currentAttempts >= UH_CONFIG.MAX_ATTEMPTS then
+            local timeLeft = UH_CONFIG.COOLDOWN_TIME - (os.time() - lastAttemptTime)
+            if timeLeft > 0 then
+                StatusTextLabel.Text = "Wait " .. tostring(timeLeft) .. " seconds..."
+                StatusTextLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+                isProcessing = false
+                return
+            else
+                currentAttempts = 0
+            end
+        end
+        
+        StatusTextLabel.Text = "Validating..."
+        StatusTextLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+        ValidateButton.Text = "..."
+        ValidateButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        
+        task.spawn(function()
+            task.wait(0.3)
+            
+            local isValid, message = ValidateKeyWithServer(inputKey)
+            
+            if isValid then
+                StatusTextLabel.Text = message
+                StatusTextLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+                ValidateButton.Text = "Success!"
+                ValidateButton.BackgroundColor3 = Color3.fromRGB(80, 200, 80)
+                
+                if UH_CONFIG.SAVE_KEY then
+                    SafeWriteFile(UH_CONFIG.KEY_FILE, inputKey)
+                    SafeWriteFile(UH_CONFIG.USER_FILE, GetHardwareId())
+                end
+                
+                task.wait(1.2)
+                CloseKeySystemGui()
+                keyValidated = true
+                validationEvent:Fire()
+            else
+                currentAttempts = currentAttempts + 1
+                lastAttemptTime = os.time()
+                
+                StatusTextLabel.Text = message
+                StatusTextLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+                ValidateButton.Text = "Validate Key"
+                ValidateButton.BackgroundColor3 = Color3.fromRGB(80, 120, 255)
+                AttemptsLabel.Text = "Attempts: " .. tostring(currentAttempts) .. "/" .. tostring(UH_CONFIG.MAX_ATTEMPTS)
+                
+                local originalPosition = InputContainer.Position
+                for i = 1, 4 do
+                    if i % 2 == 0 then
+                        InputContainer.Position = originalPosition + UDim2.new(0, 6, 0, 0)
+                    else
+                        InputContainer.Position = originalPosition + UDim2.new(0, -6, 0, 0)
+                    end
+                    task.wait(0.04)
+                end
+                InputContainer.Position = originalPosition
+                
+                InputStroke.Color = Color3.fromRGB(255, 80, 80)
+                task.wait(0.5)
+                InputStroke.Color = Color3.fromRGB(60, 60, 80)
+                
+                isProcessing = false
+            end
+        end)
+    end
+    
+    ValidateButton.MouseEnter:Connect(function()
+        local hoverTween = TweenService:Create(
+            ValidateButton,
+            TweenInfo.new(0.15),
+            {BackgroundColor3 = Color3.fromRGB(100, 140, 255)}
+        )
+        hoverTween:Play()
+    end)
+    
+    ValidateButton.MouseLeave:Connect(function()
+        local leaveTween = TweenService:Create(
+            ValidateButton,
+            TweenInfo.new(0.15),
+            {BackgroundColor3 = Color3.fromRGB(80, 120, 255)}
+        )
+        leaveTween:Play()
+    end)
+    
+    GetKeyButton.MouseEnter:Connect(function()
+        local hoverTween = TweenService:Create(
+            GetKeyButton,
+            TweenInfo.new(0.15),
+            {BackgroundColor3 = Color3.fromRGB(108, 121, 255)}
+        )
+        hoverTween:Play()
+    end)
+    
+    GetKeyButton.MouseLeave:Connect(function()
+        local leaveTween = TweenService:Create(
+            GetKeyButton,
+            TweenInfo.new(0.15),
+            {BackgroundColor3 = Color3.fromRGB(88, 101, 242)}
+        )
+        leaveTween:Play()
+    end)
+    
+    ValidateButton.MouseButton1Click:Connect(ProcessKeyValidation)
+    
+    KeyInput.FocusLost:Connect(function(enterPressed)
+        if enterPressed then
+            ProcessKeyValidation()
+        end
+    end)
+    
+    GetKeyButton.MouseButton1Click:Connect(function()
+        local opened = OpenBrowserUrl(UH_CONFIG.KEY_LINK)
+        if opened then
+            StatusTextLabel.Text = "Browser opened!"
+            StatusTextLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        else
+            SafeSetClipboard(UH_CONFIG.KEY_LINK)
+            StatusTextLabel.Text = "Link copied!"
+            StatusTextLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+        end
+    end)
+    
+    validationEvent.Event:Wait()
+    validationEvent:Destroy()
+    
+    return keyValidated
+end
+
+local function LoadCoreScript()
+    ShowNotification("Ultimate Hub", "Loading core...", 2)
+    
+    local loadSuccess, loadError = pcall(function()
+        local coreUrl = UH_CONFIG.SERVER_URL .. UH_CONFIG.CORE_ENDPOINT
+        local coreScript = game:HttpGet(coreUrl)
+        local coreFunction = loadstring(coreScript)
+        if coreFunction then
+            coreFunction()
+        end
+    end)
+    
+    if not loadSuccess then
+        ShowNotification("Ultimate Hub", "Load failed!", 5)
+        return false
+    end
+    
+    return true
+end
+
+local keySystemResult = CreateKeySystemGui()
+
+if keySystemResult then
+    LoadCoreScript()
+end
